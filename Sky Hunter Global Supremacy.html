@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>F-35 Lightning II: Final Edition</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Courier New', monospace; }
+        canvas { display: block; }
+        #hud { 
+            position: absolute; top: 10px; left: 10px; color: #0f0; 
+            background: rgba(0,20,0,0.8); padding: 10px; border: 1px solid #0f0;
+            border-radius: 5px; pointer-events: none; z-index: 10;
+        }
+        #shop {
+            position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 10px; background: rgba(0,0,0,0.9); padding: 15px; 
+            border-radius: 10px; border: 1px solid #444; width: 90%; max-width: 400px;
+        }
+        button {
+            background: #1a1a1a; color: #0f0; border: 1px solid #0f0; padding: 12px;
+            font-weight: bold; cursor: pointer; border-radius: 5px; flex: 1; font-size: 11px;
+        }
+        button:active { background: #0f0; color: #000; }
+    </style>
+</head>
+<body>
+
+    <div id="hud">
+        [SISTEMA DE COMBATE]<br>
+        SCORE: <span id="score">0</span> | MONEDAS: <span id="coins">0</span><br>
+        VIDA: <span id="hp">10</span>/10 | ARMA LVL: <span id="wlv">1</span>
+    </div>
+    
+    <div id="shop">
+        <button onclick="upgradeWeapon()">MEJORAR ARMA (50 M)</button>
+        <button onclick="repair()">REPARAR (20 M)</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Ajustar pantalla
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // Variables de juego
+        let score = 0, coins = 0, weaponLevel = 1;
+        let lastShotTime = 0;
+        let bgCycle = 0;
+
+        let player = {
+            x: canvas.width / 2,
+            y: canvas.height - 250, // Elevado para que no lo tapen los botones
+            w: 50, h: 70, hp: 10, targetX: canvas.width / 2
+        };
+
+        let bullets = [], enemies = [], enemyBullets = [];
+
+        // Controles
+        window.addEventListener('mousemove', (e) => player.targetX = e.clientX);
+        window.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            player.targetX = e.touches[0].clientX;
+        }, {passive: false});
+
+        // Tienda
+        function upgradeWeapon() {
+            if (coins >= 50) {
+                coins -= 50; weaponLevel++; updateUI();
+            }
+        }
+
+        function repair() {
+            if (coins >= 20 && player.hp < 10) {
+                coins -= 20; player.hp = 10; updateUI();
+            }
+        }
+
+        function updateUI() {
+            document.getElementById('score').innerText = score;
+            document.getElementById('coins').innerText = coins;
+            document.getElementById('hp').innerText = player.hp;
+            document.getElementById('wlv').innerText = weaponLevel;
+        }
+
+        function spawnEnemy() {
+            if (enemies.length < 4) {
+                enemies.push({
+                    x: Math.random() * (canvas.width - 60),
+                    y: -100, w: 60, h: 80, hp: 3, speed: 1.5,
+                    lastShot: Date.now() + Math.random() * 1000
+                });
+            }
+        }
+
+        // Dibujo técnico F-35
+        function drawF35(x, y) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.shadowBlur = 10; ctx.shadowColor = "#0ff";
+            ctx.fillStyle = "#444"; // Color gris stealth
+            ctx.beginPath();
+            ctx.moveTo(25, 0); // Punta
+            ctx.lineTo(55, 45); ctx.lineTo(40, 45); ctx.lineTo(45, 65); // Ala der
+            ctx.lineTo(5, 65); ctx.lineTo(10, 45); ctx.lineTo(-5, 45); // Ala izq
+            ctx.closePath(); ctx.fill();
+            // Cabina
+            ctx.fillStyle = "rgba(0, 150, 255, 0.7)";
+            ctx.beginPath(); ctx.ellipse(25, 20, 5, 12, 0, 0, Math.PI*2); ctx.fill();
+            ctx.restore();
+        }
+
+        // Dibujo técnico Su-57
+        function drawSu57(x, y, hp) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.fillStyle = "#1e272e"; // Azul oscuro/negro
+            ctx.beginPath();
+            ctx.moveTo(30, 80); // Punta adelante
+            ctx.lineTo(60, 20); ctx.lineTo(45, 20); ctx.lineTo(50, 0); // Ala der
+            ctx.lineTo(10, 0); ctx.lineTo(15, 20); ctx.lineTo(0, 20); // Ala izq
+            ctx.closePath(); ctx.fill();
+            // HP
+            ctx.fillStyle = "white"; ctx.font = "bold 12px Arial";
+            ctx.fillText(hp + " HP", 15, -10);
+            ctx.restore();
+        }
+
+        function update() {
+            // Suavizado de movimiento
+            player.x += (player.targetX - player.x - 25) * 0.15;
+
+            // Disparo automático jugador (2 balas/seg base, mejora con lvl)
+            let fireDelay = Math.max(100, 500 - (weaponLevel * 40));
+            if (Date.now() - lastShotTime > fireDelay) {
+                bullets.push({x: player.x + 25, y: player.y, v: 10});
+                if(weaponLevel >= 3) { // Doble bala a los lados
+                    bullets.push({x: player.x + 5, y: player.y + 20, v: 10});
+                    bullets.push({x: player.x + 45, y: player.y + 20, v: 10});
+                }
+                lastShotTime = Date.now();
+            }
+
+            bullets.forEach((b, i) => {
+                b.y -= b.v;
+                if (b.y < 0) bullets.splice(i, 1);
+            });
+
+            enemies.forEach((e, i) => {
+                e.y += e.speed;
+                // Disparo enemigo cada 2 segundos
+                if (Date.now() - e.lastShot > 2000) {
+                    enemyBullets.push({x: e.x + 30, y: e.y + 80});
+                    e.lastShot = Date.now();
+                }
+
+                // Colisión Bala -> Enemigo
+                bullets.forEach((b, bi) => {
+                    if (b.x > e.x && b.x < e.x + e.w && b.y > e.y && b.y < e.y + e.h) {
+                        e.hp--; bullets.splice(bi, 1);
+                        if (e.hp <= 0) {
+                            enemies.splice(i, 1);
+                            score += 10;
+                            if (score % 20 === 0) coins += 10; // Monedas cada 20 de score
+                            updateUI();
+                        }
+                    }
+                });
+                if (e.y > canvas.height) enemies.splice(i, 1);
+            });
+
+            enemyBullets.forEach((eb, i) => {
+                eb.y += 5;
+                if (eb.x > player.x && eb.x < player.x + 50 && eb.y > player.y && eb.y < player.y + 70) {
+                    player.hp--; enemyBullets.splice(i, 1);
+                    updateUI();
+                    if (player.hp <= 0) {
+                        alert("AVIÓN DERRIBADO. SCORE: " + score);
+                        location.reload();
+                    }
+                }
+                if (eb.y > canvas.height) enemyBullets.splice(i, 1);
+            });
+
+            if (Math.random() < 0.01) spawnEnemy();
+        }
+
+        function draw() {
+            // Fondo dinámico (Cambia de tono lentamente)
+            bgCycle += 0.1;
+            ctx.fillStyle = `hsl(${200 + Math.sin(bgCycle/100)*30}, 40%, 10%)`;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Balas jugador
+            ctx.fillStyle = "#0ff";
+            bullets.forEach(b => ctx.fillRect(b.x-2, b.y, 4, 15));
+
+            drawF35(player.x, player.y);
+            enemies.forEach(e => drawSu57(e.x, e.y, e.hp));
+
+            // Balas enemigas
+            ctx.fillStyle = "#f33";
+            enemyBullets.forEach(eb => {
+                ctx.beginPath(); ctx.arc(eb.x, eb.y, 6, 0, Math.PI*2); ctx.fill();
+            });
+
+            update();
+            requestAnimationFrame(draw);
+        }
+
+        draw();
+    </script>
+</body>
+</html>
